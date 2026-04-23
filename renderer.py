@@ -7,7 +7,6 @@ BART track lines are drawn as polylines connecting SF stations in order
 Station coordinates are loaded from the official BART KML.
 """
 
-import json
 import os
 import xml.etree.ElementTree as ET
 from datetime import datetime
@@ -20,6 +19,8 @@ from shapely.geometry import (
     MultiPolygon,
     Polygon,
 )
+
+from geodata.loader import get_boundary, get_parks, get_water, get_streets
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -61,43 +62,6 @@ BART_ROUTE_COLORS: dict[str, str] = {
 
 # SF BART stations south → north (used to draw the tunnel track line)
 SF_STATIONS_ORDERED = ["DALY", "BALB", "GLEN", "24TH", "16TH", "CIVC", "POWL", "MONT", "EMBR"]
-
-# Park polygons (approximate bounding corners, lat/lon)
-PARKS = [
-    # Golden Gate Park
-    [(37.7699, -122.5108), (37.7699, -122.4532),
-     (37.7693, -122.4532), (37.7693, -122.5108)],
-    # Presidio
-    [(37.8001, -122.4786), (37.8001, -122.4488),
-     (37.7834, -122.4488), (37.7834, -122.4786)],
-    # McLaren Park
-    [(37.7184, -122.4338), (37.7184, -122.4167),
-     (37.7093, -122.4167), (37.7093, -122.4338)],
-]
-
-# Bay water polygon — covers the full eastern portion of the expanded view
-# (SF Bay, Oakland waterfront) and the SF northern/eastern waterfront
-BAY_POLYGON_LATLON = [
-    # Right edge of image (Oakland/Emeryville side — all water east of SF)
-    (37.8324, -122.2840),
-    (37.8050, -122.2840),
-    (37.7800, -122.2840),
-    (37.7500, -122.2840),
-    (37.7200, -122.2840),
-    (37.6880, -122.2840),
-    # South end, curving toward SF's southeastern shore
-    (37.6880, -122.3600),
-    (37.7000, -122.3750),
-    (37.7200, -122.3800),
-    # SF Embarcadero / eastern waterfront
-    (37.7600, -122.3900),
-    (37.7900, -122.3950),
-    (37.8050, -122.3900),
-    # SF northern waterfront (Fisherman's Wharf area)
-    (37.8100, -122.3800),
-    (37.8200, -122.3700),
-    (37.8324, -122.3800),
-]
 
 # Muni light rail route corridors (approximated)
 MUNI_CORRIDORS: dict[str, list[tuple[float, float]]] = {
@@ -179,6 +143,12 @@ def _fallback_station_coords() -> dict[str, tuple[float, float]]:
 # Load once at import time
 _BART_STATION_COORDS = _load_bart_station_coords()
 
+# OSMnx geodata — loaded once at import time (warm cache: <1s, cold cache: ~60s)
+_osm_boundary = get_boundary()
+_osm_parks    = get_parks()
+_osm_water    = get_water()
+_osm_streets  = get_streets()
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -220,34 +190,6 @@ def load_font(size: int, bold: bool = False) -> ImageFont.FreeTypeFont:
             except Exception:
                 continue
     return ImageFont.load_default()
-
-
-def load_geojson_polygons(path: str, width: int, height: int) -> list[list[tuple[int, int]]]:
-    with open(path) as f:
-        data = json.load(f)
-
-    polygons = []
-    for feature in data.get("features", []):
-        geom = feature.get("geometry", {})
-        geom_type = geom.get("type", "")
-        coords = geom.get("coordinates", [])
-
-        if geom_type == "Polygon":
-            rings = [coords[0]]
-        elif geom_type == "MultiPolygon":
-            rings = [poly[0] for poly in coords]
-        else:
-            continue
-
-        for ring in rings:
-            pts = []
-            for lon, lat in ring:
-                if in_bounds(lat, lon):
-                    pts.append(project(lat, lon, width, height))
-            if len(pts) >= 3:
-                polygons.append(pts)
-
-    return polygons
 
 
 def draw_dashed_line(draw: ImageDraw.ImageDraw, pts: list[tuple[int, int]],
@@ -335,7 +277,7 @@ def draw_geom(
 # ---------------------------------------------------------------------------
 
 def render(vehicles: list[dict], width: int = 800, height: int = 480) -> None:
-    img = Image.new("RGB", (width, height), "#F5F0E4")
+    img = Image.new("RGB", (width, height), "#D4E8F0")   # Bay water blue as base
     draw = ImageDraw.Draw(img, "RGBA")
 
     # 1. Background already filled above
@@ -346,21 +288,22 @@ def render(vehicles: list[dict], width: int = 800, height: int = 480) -> None:
     for offset in range(-height, width + height, step):
         draw.line([(offset, 0), (offset + height, height)], fill=hatch_color, width=1)
 
-    # 3. Bay water
-    bay_pts = [project(lat, lon, width, height) for lat, lon in BAY_POLYGON_LATLON]
-    draw.polygon(bay_pts, fill="#D4E8F0")
+    # 3. SF land boundary (OSMnx)
+    for geom in _osm_boundary.geometry:
+        draw_geom(draw, geom, width, height, fill="#E8E2D4", outline="#2A2A2A")
 
-    # 4. SF coastline from GeoJSON
-    geojson_path = os.path.join(os.path.dirname(__file__), "geodata", "sf.geojson")
-    if os.path.exists(geojson_path):
-        polygons = load_geojson_polygons(geojson_path, width, height)
-        for poly in polygons:
-            draw.polygon(poly, fill="#E8E2D4", outline="#2A2A2A")
+    # 4. Parks (OSMnx)
+    for geom in _osm_parks.geometry:
+        draw_geom(draw, geom, width, height, fill="#C8D8B0")
 
-    # 5. Park areas
-    for park_pts_latlon in PARKS:
-        park_pts = [project(lat, lon, width, height) for lat, lon in park_pts_latlon]
-        draw.polygon(park_pts, fill="#C8D8B0")
+    # 5. Streets (OSMnx — primary/secondary/tertiary, faint)
+    street_color = hex_to_rgb("#C8BFA8")
+    for geom in _osm_streets.geometry:
+        draw_geom(draw, geom, width, height, outline=street_color, line_width=1)
+
+    # 5b. Inland water bodies (OSMnx — Stow Lake, Mountain Lake, etc.)
+    for geom in _osm_water.geometry:
+        draw_geom(draw, geom, width, height, fill="#D4E8F0")
 
     # 6. BART route lines — one polyline connecting SF stations south→north
     # All lines share the SF tunnel; draw a single bold line for each color

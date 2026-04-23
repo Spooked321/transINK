@@ -28,16 +28,16 @@ def _cache_path(name: str) -> str:
 def _load_or_fetch(name: str, fetch_fn) -> gpd.GeoDataFrame:
     """Generic cache-or-fetch pattern. Returns empty GeoDataFrame on error."""
     path = _cache_path(name)
-    if os.path.exists(path):
-        logger.debug("Loading %s from cache: %s", name, path)
-        return gpd.read_file(path)
     try:
+        if os.path.exists(path):
+            logger.debug("Loading %s from cache: %s", name, path)
+            return gpd.read_file(path)
         logger.info("Fetching %s from OSMnx (Overpass API)...", name)
-        gdf = fetch_fn()
         os.makedirs(CACHE_DIR, exist_ok=True)
+        gdf = fetch_fn()
         gdf[["geometry"]].to_file(path, driver="GPKG")
         logger.info("Cached %s to %s (%d rows)", name, path, len(gdf))
-        return gdf
+        return gdf[["geometry"]]
     except Exception as exc:
         logger.error("Failed to fetch %s: %s — returning empty GeoDataFrame", name, exc)
         return gpd.GeoDataFrame({"geometry": []}, crs="EPSG:4326")

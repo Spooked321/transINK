@@ -12,13 +12,6 @@ import xml.etree.ElementTree as ET
 from datetime import datetime
 
 from PIL import Image, ImageDraw, ImageFont
-from shapely.geometry import (
-    GeometryCollection,
-    LineString,
-    MultiLineString,
-    MultiPolygon,
-    Polygon,
-)
 
 from geodata.loader import get_boundary, get_parks, get_water, get_streets
 

@@ -7,6 +7,7 @@
 # Generated output
 output/map.png
 geodata/cache/
+cache/
 
 # Python artifacts
 __pycache__/

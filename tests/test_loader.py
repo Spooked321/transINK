@@ -25,8 +25,8 @@ def _mixed_gdf():
     """GeoDataFrame with polygon + non-polygon rows (points should be filtered)."""
     return gpd.GeoDataFrame(
         {"geometry": [
-            box(-122.51, 37.77, -122.45, 37.76),   # Polygon — keep
-            box(-122.46, 37.75, -122.44, 37.74),   # Polygon — keep
+            box(-122.51, 37.76, -122.45, 37.77),   # Polygon — keep
+            box(-122.46, 37.74, -122.44, 37.75),   # Polygon — keep
             Point(-122.4, 37.8),                    # Point — filter out
         ]},
         crs="EPSG:4326",
@@ -94,7 +94,7 @@ class TestGetParks:
     def test_warm_cache_skips_osmnx(self, tmp_path, monkeypatch):
         import geodata.loader as loader
         monkeypatch.setattr(loader, "CACHE_DIR", str(tmp_path))
-        _boundary_gdf()[["geometry"]].to_file(tmp_path / "parks.gpkg", driver="GPKG")
+        _mixed_gdf()[["geometry"]].to_file(tmp_path / "parks.gpkg", driver="GPKG")
 
         with patch.object(loader.ox, "features_from_place") as mock_fn:
             loader.get_parks()
@@ -122,7 +122,7 @@ class TestGetWater:
     def test_warm_cache_skips_osmnx(self, tmp_path, monkeypatch):
         import geodata.loader as loader
         monkeypatch.setattr(loader, "CACHE_DIR", str(tmp_path))
-        _boundary_gdf()[["geometry"]].to_file(tmp_path / "water.gpkg", driver="GPKG")
+        _mixed_gdf()[["geometry"]].to_file(tmp_path / "water.gpkg", driver="GPKG")
 
         with patch.object(loader.ox, "features_from_place") as mock_fn:
             loader.get_water()

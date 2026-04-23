@@ -317,7 +317,7 @@ def draw_geom(
     elif gtype == "LineString":
         pts = [project(lat, lon, width, height) for lon, lat in geom.coords]
         if len(pts) >= 2:
-            draw.line(pts, fill=outline or fill, width=line_width)
+            draw.line(pts, fill=outline if outline is not None else fill, width=line_width)
 
     elif gtype == "MultiLineString":
         for part in geom.geoms:

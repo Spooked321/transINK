@@ -13,6 +13,13 @@ import xml.etree.ElementTree as ET
 from datetime import datetime
 
 from PIL import Image, ImageDraw, ImageFont
+from shapely.geometry import (
+    GeometryCollection,
+    LineString,
+    MultiLineString,
+    MultiPolygon,
+    Polygon,
+)
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -273,6 +280,55 @@ def draw_dashed_line(draw: ImageDraw.ImageDraw, pts: list[tuple[int, int]],
 
             traveled += step
             dist_accum += step
+
+
+def draw_geom(
+    draw: ImageDraw.ImageDraw,
+    geom,
+    width: int,
+    height: int,
+    fill=None,
+    outline=None,
+    line_width: int = 1,
+) -> None:
+    """Project a Shapely geometry onto the Pillow canvas via project().
+
+    Handles Polygon, MultiPolygon, LineString, MultiLineString, and
+    GeometryCollection recursively. Silently ignores None and empty geometries.
+
+    OSMnx geometries use (lon, lat) coordinate order (GIS standard x, y).
+    project() expects (lat, lon), so coordinates are swapped on projection.
+    """
+    if geom is None or geom.is_empty:
+        return
+
+    gtype = geom.geom_type
+
+    if gtype == "Polygon":
+        pts = [project(lat, lon, width, height) for lon, lat in geom.exterior.coords]
+        if len(pts) >= 3:
+            draw.polygon(pts, fill=fill, outline=outline)
+
+    elif gtype == "MultiPolygon":
+        for part in geom.geoms:
+            draw_geom(draw, part, width, height, fill=fill, outline=outline,
+                      line_width=line_width)
+
+    elif gtype == "LineString":
+        pts = [project(lat, lon, width, height) for lon, lat in geom.coords]
+        if len(pts) >= 2:
+            draw.line(pts, fill=outline or fill, width=line_width)
+
+    elif gtype == "MultiLineString":
+        for part in geom.geoms:
+            draw_geom(draw, part, width, height, fill=fill, outline=outline,
+                      line_width=line_width)
+
+    elif gtype == "GeometryCollection":
+        for part in geom.geoms:
+            draw_geom(draw, part, width, height, fill=fill, outline=outline,
+                      line_width=line_width)
+    # Points and other types are silently ignored
 
 # ---------------------------------------------------------------------------
 # Render

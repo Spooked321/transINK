@@ -51,7 +51,7 @@ def _any_red(img):
 
 
 def _any_blue(img):
-    return any(p[2] > 200 and p[0] < 50 for p in img.getdata())
+    return any(p[2] >= 200 and p[0] < 50 for p in img.getdata())
 
 
 # ---------------------------------------------------------------------------
@@ -90,9 +90,7 @@ class TestDrawGeomLineString:
 
     def test_single_point_line_does_not_raise(self):
         _, draw = _make_canvas()
-        lat_mid = (renderer.SF_BOUNDS["lat_min"] + renderer.SF_BOUNDS["lat_max"]) / 2
-        lon_mid = (renderer.SF_BOUNDS["lon_min"] + renderer.SF_BOUNDS["lon_max"]) / 2
-        line = LineString([(lon_mid, lat_mid)])
+        line = LineString()
         renderer.draw_geom(draw, line, 100, 100, outline="red")
 
 

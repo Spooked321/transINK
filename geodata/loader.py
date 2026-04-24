@@ -73,24 +73,36 @@ def get_streets() -> gpd.GeoDataFrame:
 
 
 def get_muni_routes() -> gpd.GeoDataFrame:
-    """OSM tram route relations in SF, cached to muni_routes.gpkg.
+    """OSM tram/light-rail ways in SF, cached to muni_routes.gpkg.
 
-    Columns: geometry (LineString/MultiLineString), ref (Muni route letter).
+    Columns: geometry (LineString), ref (Muni route letter extracted from name,
+    e.g. 'N' from 'Muni N'; empty string for shared/unnamed tracks).
     Uses its own cache logic (not _load_or_fetch) to preserve the ref column.
     """
+    import re
+
+    def _ref_from_name(name) -> str:
+        if not name or (hasattr(name, "__class__") and name != name):  # NaN check
+            return ""
+        m = re.match(r"Muni\s+([A-Z])\b", str(name))
+        return m.group(1) if m else ""
+
     path = _cache_path("muni_routes")
-    known_routes = {"J", "K", "L", "M", "N", "T", "F"}
     try:
         if os.path.exists(path):
             logger.debug("Loading muni_routes from cache: %s", path)
             return gpd.read_file(path)
         logger.info("Fetching Muni routes from OSMnx (Overpass API)...")
         os.makedirs(CACHE_DIR, exist_ok=True)
-        gdf = ox.features_from_place(PLACE, tags={"route": "tram"})
-        if "ref" in gdf.columns:
-            gdf = gdf[gdf["ref"].isin(known_routes)].copy()
+        gdf = ox.features_from_place(PLACE, tags={"railway": ["tram", "light_rail"]})
+        gdf = gdf.copy()
+        name_col = gdf["name"] if "name" in gdf.columns else None
+        ref_col = gdf["ref"] if "ref" in gdf.columns else None
+        if ref_col is not None:
+            gdf["ref"] = ref_col.fillna("").astype(str)
+        elif name_col is not None:
+            gdf["ref"] = name_col.apply(_ref_from_name)
         else:
-            gdf = gdf.copy()
             gdf["ref"] = ""
         out = gdf[["geometry", "ref"]]
         out.to_file(path, driver="GPKG")

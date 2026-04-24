@@ -192,7 +192,7 @@ class TestGetMuniRoutes:
             crs="EPSG:4326",
         )
 
-    def test_cold_cache_filters_to_known_routes(self, tmp_path, monkeypatch):
+    def test_cold_cache_extracts_ref_from_name(self, tmp_path, monkeypatch):
         import geodata.loader as loader
         monkeypatch.setattr(loader, "CACHE_DIR", str(tmp_path))
 
@@ -201,8 +201,9 @@ class TestGetMuniRoutes:
                 "geometry": [
                     LineString([(-122.42, 37.77), (-122.40, 37.79)]),
                     LineString([(-122.46, 37.76), (-122.44, 37.75)]),
+                    LineString([(-122.43, 37.76), (-122.41, 37.77)]),
                 ],
-                "ref": ["N", "X"],   # X is not a Muni line
+                "name": ["Muni N", "Muni Metro", None],
             },
             crs="EPSG:4326",
         )
@@ -211,7 +212,8 @@ class TestGetMuniRoutes:
 
         assert (tmp_path / "muni_routes.gpkg").exists(), "cache file should be written"
         assert "N" in result["ref"].values
-        assert "X" not in result["ref"].values
+        assert "" in result["ref"].values   # Muni Metro and None → empty ref
+        assert len(result) == 3
 
     def test_warm_cache_skips_osmnx(self, tmp_path, monkeypatch):
         import geodata.loader as loader

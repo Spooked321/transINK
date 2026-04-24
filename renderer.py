@@ -2,9 +2,8 @@
 Renders a retro-styled SF transit map as a Pillow image.
 Saves result to output/map.png.
 
-BART track lines are drawn as polylines connecting SF stations in order
-(the tunnel follows a nearly straight path through downtown SF).
-Station coordinates are loaded from the official BART KML.
+BART track geometry is loaded from the official BART KML (Track Centerline folder).
+Muni route geometry is fetched from OSM via OSMnx and cached as a GeoPackage.
 """
 
 import os
@@ -13,7 +12,7 @@ from datetime import datetime
 
 from PIL import Image, ImageDraw, ImageFont
 
-from geodata.loader import get_boundary, get_parks, get_water, get_streets
+from geodata.loader import get_boundary, get_parks, get_water, get_streets, get_muni_routes
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -51,20 +50,6 @@ BART_ROUTE_COLORS: dict[str, str] = {
     "BLUE":   "Blue",
     "GREEN":  "Green",
     "ORANGE": "Orange",
-}
-
-# SF BART stations south → north (used to draw the tunnel track line)
-SF_STATIONS_ORDERED = ["DALY", "BALB", "GLEN", "24TH", "16TH", "CIVC", "POWL", "MONT", "EMBR"]
-
-# Muni light rail route corridors (approximated)
-MUNI_CORRIDORS: dict[str, list[tuple[float, float]]] = {
-    "N": [(37.7796, -122.3948), (37.7714, -122.4463), (37.7640, -122.4591), (37.7607, -122.5085)],
-    "J": [(37.7959, -122.3937), (37.7647, -122.4283), (37.7521, -122.4239), (37.7258, -122.4520)],
-    "L": [(37.7796, -122.3948), (37.7440, -122.4762), (37.7394, -122.5024)],
-    "M": [(37.7796, -122.3948), (37.7283, -122.4523), (37.6947, -122.4649)],
-    "K": [(37.7796, -122.3948), (37.7258, -122.4520), (37.7283, -122.4523)],
-    "T": [(37.8080, -122.4156), (37.7959, -122.3937), (37.7580, -122.3879), (37.7143, -122.4012)],
-    "F": [(37.8080, -122.4156), (37.7959, -122.3937), (37.7706, -122.3895)],
 }
 
 # ---------------------------------------------------------------------------
@@ -176,12 +161,14 @@ def _load_bart_tracks(kml_path: str | None = None) -> list:
 
 # Load once at import time
 _BART_STATION_COORDS = _load_bart_station_coords()
+_BART_TRACKS         = _load_bart_tracks()
 
 # OSMnx geodata — loaded once at import time (warm cache: <1s, cold cache: ~60s)
 _osm_boundary = get_boundary()
 _osm_parks    = get_parks()
 _osm_water    = get_water()
 _osm_streets  = get_streets()
+_muni_routes  = get_muni_routes()
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -339,33 +326,21 @@ def render(vehicles: list[dict], width: int = 800, height: int = 480) -> None:
     for geom in _osm_water.geometry:
         draw_geom(draw, geom, width, height, fill="#D4E8F0")
 
-    # 6. BART route lines — one polyline connecting SF stations south→north
-    # All lines share the SF tunnel; draw a single bold line for each color
-    # so the map shows all BART routes without overplotting
-    bart_track_pts = []
-    for abbr in SF_STATIONS_ORDERED:
-        coords = _BART_STATION_COORDS.get(abbr)
-        if coords:
-            bart_track_pts.append(project(coords[0], coords[1], width, height))
+    # 6. BART route lines — real KML track geometry, stacked color bundle
+    for geom in _BART_TRACKS:
+        for hex_color in BART_COLORS.values():
+            draw_geom(draw, geom, width, height, outline=hex_to_rgb(hex_color), line_width=7)
+        draw_geom(draw, geom, width, height, outline=hex_to_rgb("#F5F0E4"), line_width=2)
 
-    if len(bart_track_pts) >= 2:
-        for color_name, hex_color in BART_COLORS.items():
-            draw.line(bart_track_pts, fill=hex_color, width=7)
-        # Draw again with cream center to give a multi-line "bundle" feel
-        draw.line(bart_track_pts, fill="#F5F0E4", width=2)
-
-    # 7. Muni route lines (dashed)
-    for route_id, corridor in MUNI_CORRIDORS.items():
-        pts = [project(lat, lon, width, height) for lat, lon in corridor]
-        color_hex = MUNI_COLORS.get(route_id, "#888888")
-        draw_dashed_line(draw, pts, hex_to_rgb(color_hex), 4, [12, 3])
+    # 7. Muni route lines (OSM geometry, per-line color)
+    for _, row in _muni_routes.iterrows():
+        ref = row.get("ref", "")
+        color = hex_to_rgb(MUNI_COLORS.get(ref, "#888888"))
+        draw_geom(draw, row.geometry, width, height, outline=color, line_width=4)
 
     # 8. BART station circles (SF only, from KML coords)
     station_r = 6
-    for abbr in SF_STATIONS_ORDERED:
-        coords = _BART_STATION_COORDS.get(abbr)
-        if not coords:
-            continue
+    for abbr, coords in _BART_STATION_COORDS.items():
         lat, lon = coords
         if not in_bounds(lat, lon):
             continue

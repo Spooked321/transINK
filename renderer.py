@@ -297,7 +297,7 @@ def draw_geom(
 # Render
 # ---------------------------------------------------------------------------
 
-def render(vehicles: list[dict], width: int = 800, height: int = 480) -> None:
+def render(vehicles: list[dict], width: int = 0, height: int = 0) -> None:
     img = Image.new("RGB", (width, height), "#D4E8F0")   # Bay water blue as base
     draw = ImageDraw.Draw(img, "RGBA")
 

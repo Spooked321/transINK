@@ -70,3 +70,32 @@ def get_streets() -> gpd.GeoDataFrame:
         G = ox.graph_from_place(PLACE, custom_filter=STREET_FILTER)
         return ox.graph_to_gdfs(G, nodes=False)
     return _load_or_fetch("streets", fetch)
+
+
+def get_muni_routes() -> gpd.GeoDataFrame:
+    """OSM tram route relations in SF, cached to muni_routes.gpkg.
+
+    Columns: geometry (LineString/MultiLineString), ref (Muni route letter).
+    Uses its own cache logic (not _load_or_fetch) to preserve the ref column.
+    """
+    path = _cache_path("muni_routes")
+    known_routes = {"J", "K", "L", "M", "N", "T", "F"}
+    try:
+        if os.path.exists(path):
+            logger.debug("Loading muni_routes from cache: %s", path)
+            return gpd.read_file(path)
+        logger.info("Fetching Muni routes from OSMnx (Overpass API)...")
+        os.makedirs(CACHE_DIR, exist_ok=True)
+        gdf = ox.features_from_place(PLACE, tags={"route": "tram"})
+        if "ref" in gdf.columns:
+            gdf = gdf[gdf["ref"].isin(known_routes)].copy()
+        else:
+            gdf = gdf.copy()
+            gdf["ref"] = ""
+        out = gdf[["geometry", "ref"]]
+        out.to_file(path, driver="GPKG")
+        logger.info("Cached muni_routes to %s (%d rows)", path, len(out))
+        return out
+    except Exception as exc:
+        logger.error("Failed to fetch muni_routes: %s — returning empty GeoDataFrame", exc)
+        return gpd.GeoDataFrame({"geometry": [], "ref": []}, crs="EPSG:4326")

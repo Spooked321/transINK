@@ -173,3 +173,65 @@ class TestErrorHandling:
 
         assert isinstance(result, gpd.GeoDataFrame)
         assert len(result) == 0
+
+
+# ---------------------------------------------------------------------------
+# get_muni_routes
+# ---------------------------------------------------------------------------
+
+class TestGetMuniRoutes:
+    def _muni_gdf(self):
+        return gpd.GeoDataFrame(
+            {
+                "geometry": [
+                    LineString([(-122.42, 37.77), (-122.40, 37.79)]),
+                    LineString([(-122.46, 37.76), (-122.44, 37.75)]),
+                ],
+                "ref": ["N", "J"],
+            },
+            crs="EPSG:4326",
+        )
+
+    def test_cold_cache_filters_to_known_routes(self, tmp_path, monkeypatch):
+        import geodata.loader as loader
+        monkeypatch.setattr(loader, "CACHE_DIR", str(tmp_path))
+
+        mock_gdf = gpd.GeoDataFrame(
+            {
+                "geometry": [
+                    LineString([(-122.42, 37.77), (-122.40, 37.79)]),
+                    LineString([(-122.46, 37.76), (-122.44, 37.75)]),
+                ],
+                "ref": ["N", "X"],   # X is not a Muni line
+            },
+            crs="EPSG:4326",
+        )
+        with patch.object(loader.ox, "features_from_place", return_value=mock_gdf):
+            result = loader.get_muni_routes()
+
+        assert (tmp_path / "muni_routes.gpkg").exists(), "cache file should be written"
+        assert "N" in result["ref"].values
+        assert "X" not in result["ref"].values
+
+    def test_warm_cache_skips_osmnx(self, tmp_path, monkeypatch):
+        import geodata.loader as loader
+        monkeypatch.setattr(loader, "CACHE_DIR", str(tmp_path))
+        self._muni_gdf().to_file(tmp_path / "muni_routes.gpkg", driver="GPKG")
+
+        with patch.object(loader.ox, "features_from_place") as mock_fn:
+            result = loader.get_muni_routes()
+
+        mock_fn.assert_not_called()
+        assert len(result) == 2
+        assert "ref" in result.columns
+
+    def test_returns_empty_on_error(self, tmp_path, monkeypatch):
+        import geodata.loader as loader
+        monkeypatch.setattr(loader, "CACHE_DIR", str(tmp_path))
+
+        with patch.object(loader.ox, "features_from_place", side_effect=Exception("network error")):
+            result = loader.get_muni_routes()
+
+        assert isinstance(result, gpd.GeoDataFrame)
+        assert len(result) == 0
+        assert "ref" in result.columns

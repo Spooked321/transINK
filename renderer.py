@@ -133,6 +133,47 @@ def _fallback_station_coords() -> dict[str, tuple[float, float]]:
     }
 
 
+def _load_bart_tracks(kml_path: str | None = None) -> list:
+    """Parse LineString elements from BART KML Track Centerline folder.
+
+    Returns Shapely LineStrings that intersect the SF bounding box.
+    Accepts an optional kml_path for testing; defaults to the geodata KML.
+    """
+    from shapely.geometry import LineString as _LS, box as _box
+    if kml_path is None:
+        kml_path = os.path.join(os.path.dirname(__file__), "geodata", "bart_stations_tracks.kml")
+    if not os.path.exists(kml_path):
+        return []
+    sf_box = _box(
+        SF_BOUNDS["lon_min"], SF_BOUNDS["lat_min"],
+        SF_BOUNDS["lon_max"], SF_BOUNDS["lat_max"],
+    )
+    try:
+        tree = ET.parse(kml_path)
+        root = tree.getroot()
+        ns = root.tag.split("}")[0] + "}" if "}" in root.tag else ""
+        tracks = []
+        for folder in root.iter(f"{ns}Folder"):
+            if "Track Centerline" not in (folder.findtext(f"{ns}name") or ""):
+                continue
+            for ls_el in folder.iter(f"{ns}LineString"):
+                coord_el = ls_el.find(f"{ns}coordinates")
+                if coord_el is None or not coord_el.text:
+                    continue
+                coords = []
+                for triplet in coord_el.text.strip().split():
+                    parts = triplet.split(",")
+                    if len(parts) >= 2:
+                        coords.append((float(parts[0]), float(parts[1])))
+                if len(coords) >= 2:
+                    geom = _LS(coords)
+                    if geom.intersects(sf_box):
+                        tracks.append(geom)
+        return tracks
+    except Exception:
+        return []
+
+
 # Load once at import time
 _BART_STATION_COORDS = _load_bart_station_coords()
 

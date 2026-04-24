@@ -115,3 +115,61 @@ class TestDrawGeomMulti:
         _, draw = _make_canvas()
         gc = GeometryCollection([_sf_box(), _sf_line(), Point(0, 0)])
         renderer.draw_geom(draw, gc, 100, 100, fill="red", outline="blue")
+
+
+# ---------------------------------------------------------------------------
+# _load_bart_tracks
+# ---------------------------------------------------------------------------
+
+_KML_IN_BOUNDS = """\
+<?xml version="1.0" encoding="UTF-8"?>
+<kml xmlns="http://www.opengis.net/kml/2.2"><Document>
+<Folder>
+  <name>BART Track Centerline</name>
+  <Placemark>
+    <name>1</name>
+    <MultiGeometry>
+      <LineString>
+        <coordinates>-122.397,37.793,0 -122.402,37.785,0 -122.408,37.779,0</coordinates>
+      </LineString>
+    </MultiGeometry>
+  </Placemark>
+</Folder>
+</Document>
+</kml>"""
+
+_KML_OUT_OF_BOUNDS = """\
+<?xml version="1.0" encoding="UTF-8"?>
+<kml xmlns="http://www.opengis.net/kml/2.2"><Document>
+<Folder>
+  <name>BART Track Centerline</name>
+  <Placemark>
+    <name>1</name>
+    <MultiGeometry>
+      <LineString>
+        <coordinates>-121.500,37.000,0 -121.600,37.100,0</coordinates>
+      </LineString>
+    </MultiGeometry>
+  </Placemark>
+</Folder>
+</Document>
+</kml>"""
+
+
+class TestLoadBartTracks:
+    def test_missing_kml_returns_empty_list(self, tmp_path):
+        result = renderer._load_bart_tracks(str(tmp_path / "nonexistent.kml"))
+        assert result == []
+
+    def test_returns_shapely_linestrings_within_sf(self, tmp_path):
+        kml_file = tmp_path / "test.kml"
+        kml_file.write_text(_KML_IN_BOUNDS)
+        result = renderer._load_bart_tracks(str(kml_file))
+        assert len(result) == 1
+        assert result[0].geom_type == "LineString"
+
+    def test_filters_out_of_bounds_segments(self, tmp_path):
+        kml_file = tmp_path / "test.kml"
+        kml_file.write_text(_KML_OUT_OF_BOUNDS)
+        result = renderer._load_bart_tracks(str(kml_file))
+        assert result == []

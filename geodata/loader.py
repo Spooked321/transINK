@@ -44,8 +44,95 @@ def _load_or_fetch(name: str, fetch_fn) -> gpd.GeoDataFrame:
 
 
 def get_boundary() -> gpd.GeoDataFrame:
-    """Return the SF administrative boundary as a single-row GeoDataFrame."""
-    return _load_or_fetch("boundary", lambda: ox.geocode_to_gdf(PLACE))
+    """Return SF land polygon from OSM coastline ways + admin fallback for the north strip.
+
+    Builds the SF peninsula land polygon by finding the coastline way chain that
+    traces the full peninsula (both Bay and Pacific coasts, from south tip to south
+    tip) and closing it into a polygon.  That gives accurate Bay-side boundaries
+    (fixing the natural=bay polygon gap near Mission Bay).
+
+    The coastline path only reaches ~lat 37.81 at the northern waterfront, so the
+    strip above that (Presidio / Golden Gate approach) is supplemented by the
+    admin-minus-bay approach, which is accurate there.
+
+    Falls back to admin-minus-bay for the whole polygon if coastline data fails.
+    """
+    def _bay_polygon():
+        from shapely.ops import unary_union
+        # OSMnx 2.x bbox format: (left, bottom, right, top)
+        bay_gdf = ox.features_from_bbox(
+            bbox=(-122.555, 37.440, -122.030, 37.990), tags={"natural": "bay"}
+        )
+        polys = bay_gdf[bay_gdf.geometry.geom_type.isin(["Polygon", "MultiPolygon"])].geometry.tolist()
+        return unary_union(polys) if polys else None
+
+    def fetch():
+        from shapely.ops import linemerge, unary_union
+        from shapely.geometry import Polygon, box as sbox
+
+        admin_poly = ox.geocode_to_gdf(PLACE).geometry.iloc[0]
+
+        try:
+            # Get coastline ways in a wide SF bbox
+            coast_gdf = ox.features_from_bbox(
+                bbox=(-122.55, 37.60, -122.32, 37.90),
+                tags={"natural": "coastline"},
+            )
+            lines = coast_gdf[coast_gdf.geometry.geom_type == "LineString"].geometry.tolist()
+            merged = linemerge(lines)
+            pieces = merged.geoms if hasattr(merged, "geoms") else [merged]
+
+            # The SF peninsula piece has both endpoints south of lat 37.65
+            sf_piece = next(
+                (g for g in pieces
+                 if len(list(g.coords)) > 1000
+                 and list(g.coords)[0][1] < 37.65
+                 and list(g.coords)[-1][1] < 37.65),
+                None,
+            )
+            if sf_piece is None:
+                raise ValueError("SF peninsula coastline piece not found")
+
+            coords = list(sf_piece.coords)
+            coast_land = Polygon(coords + [coords[0]])
+            if not coast_land.is_valid:
+                from shapely import make_valid
+                coast_land = make_valid(coast_land)
+
+            # Clip to the visible SF map area (admin polygon clips incorrectly at
+            # the southern Hunters Point / India Basin boundary, so use a bbox instead)
+            vis_box = sbox(-122.56, 37.65, -122.32, 37.90)
+            coast_land = coast_land.intersection(vis_box)
+
+            # Supplement the northern strip (lat 37.81+) with admin-minus-bay for
+            # the eastern/bay side only. Clip west to ~-122.47 (≈ Pacific coast at
+            # those latitudes) so we don't paint Pacific Ocean as land.
+            north_strip = sbox(-122.47, 37.806, -122.32, 37.90)
+            bay = _bay_polygon()
+            if bay is not None:
+                north_land = admin_poly.difference(bay).intersection(north_strip)
+                coast_land = unary_union([coast_land, north_land])
+
+            if coast_land.is_empty:
+                raise ValueError("Empty coastline land polygon")
+
+            return gpd.GeoDataFrame(geometry=[coast_land], crs="EPSG:4326")
+
+        except Exception as exc:
+            logger.warning("Coastline polygon failed: %s — falling back to admin-minus-bay", exc)
+
+        # Fallback: admin polygon minus Bay polygon
+        try:
+            bay = _bay_polygon()
+            if bay is not None:
+                land = admin_poly.difference(bay)
+                return gpd.GeoDataFrame(geometry=[land], crs="EPSG:4326")
+        except Exception as exc2:
+            logger.warning("Bay subtraction also failed: %s — using raw admin boundary", exc2)
+
+        return ox.geocode_to_gdf(PLACE)
+
+    return _load_or_fetch("boundary", fetch)
 
 
 def get_parks() -> gpd.GeoDataFrame:
